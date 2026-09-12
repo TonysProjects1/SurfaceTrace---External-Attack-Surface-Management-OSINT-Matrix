@@ -1,0 +1,7 @@
+{
+  "name": "SurfaceTrace - External Attack Surface Management & OSINT Matrix",
+  "description": "Enterprise External Attack Surface Management (EASM) platform with live digital footprint discovery, curated OSINT intelligence directory, and MITRE ATT&CK chain mapping.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
