@@ -183,4 +183,6 @@ export interface OsintTool {
   };
   sampleWorkflow: string;
   tags: string[];
+  leveragedBySurfaceTrace?: boolean;
+  surfaceTraceIntegration?: string;
 }

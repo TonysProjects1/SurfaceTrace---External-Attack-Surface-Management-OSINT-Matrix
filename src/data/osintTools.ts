@@ -22,7 +22,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Search Open Technical Databases: Digital Certificates'
     },
     sampleWorkflow: 'Query "%.targetcompany.com" to retrieve all historic and current subdomains extracted from Subject Alternative Names (SANs).',
-    tags: ['CT Logs', 'Subdomains', 'SSL/TLS', 'Passive Recon']
+    tags: ['CT Logs', 'Subdomains', 'SSL/TLS', 'Passive Recon'],
+    leveragedBySurfaceTrace: true,
+    surfaceTraceIntegration: 'Directly queried via crt.sh API in server/scanner.ts to extract SAN certificates and enumerate subdomains.'
   },
   {
     id: 'dnsdumpster',
@@ -44,7 +46,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Search Open Technical Databases: DNS Records'
     },
     sampleWorkflow: 'Input company root domain to pull complete zone data, map MX records to mail gateways, and locate forgotten test environments.',
-    tags: ['DNS', 'Perimeter Mapping', 'Topology', 'Visual Recon']
+    tags: ['DNS', 'Perimeter Mapping', 'Topology', 'Visual Recon'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External research tool. SurfaceTrace natively executes DoH (RFC 8484) queries via Cloudflare & Google resolvers.'
   },
   {
     id: 'shodan',
@@ -66,7 +70,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Active Scanning: Vulnerability Scanning'
     },
     sampleWorkflow: 'Search "org:\\"Target Enterprise\\" port:9200,27017" or "ssl:\\"targetcompany.com\\"" to discover exposed backend endpoints.',
-    tags: ['IoT', 'Port Scanning', 'Exposed Services', 'Service Banners']
+    tags: ['IoT', 'Port Scanning', 'Exposed Services', 'Service Banners'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External reference. SurfaceTrace performs non-invasive perimeter evaluation without performing raw port scans or requiring commercial Shodan API keys.'
   },
   {
     id: 'censys-search',
@@ -88,7 +94,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Search Open Technical Databases: Scan Databases'
     },
     sampleWorkflow: 'Run `services.tls.certificates.leaf_data.names: targetcompany.com` to discover IP addresses presenting your corporate SSL cert without CDN protection.',
-    tags: ['Origin Discovery', 'TLS Auditing', 'Virtual Hosts', 'WAF Bypass']
+    tags: ['Origin Discovery', 'TLS Auditing', 'Virtual Hosts', 'WAF Bypass'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External threat database. SurfaceTrace avoids requiring paid commercial API credentials.'
   },
   {
     id: 'grayhatwarfare',
@@ -110,7 +118,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Search Open Websites/Domains: Social Media / Cloud Storage'
     },
     sampleWorkflow: 'Search keywords like "targetcompany backup", "targetcompany-prod", or "targetcompany.com" to audit exposed object storage.',
-    tags: ['AWS S3', 'Azure Blob', 'Cloud Leak', 'Data Exposure']
+    tags: ['AWS S3', 'Azure Blob', 'Cloud Leak', 'Data Exposure'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External cloud storage intelligence repository.'
   },
   {
     id: 'gitguardian-public',
@@ -132,7 +142,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Search Open Websites/Domains: Code Repositories'
     },
     sampleWorkflow: 'Query organizational domain and token hashes via HasMySecretLeaked to check if employee commits exposed cloud infrastructure keys.',
-    tags: ['GitHub', 'Secret Leaks', 'API Keys', 'Credentials']
+    tags: ['GitHub', 'Secret Leaks', 'API Keys', 'Credentials'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External git commit secret monitor.'
   },
   {
     id: 'haveibeenpwned',
@@ -154,7 +166,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Gather Victim Identity Information: Credentials'
     },
     sampleWorkflow: 'Use the domain verification tool to generate a report of all `@company.com` addresses present in historical database breaches.',
-    tags: ['Credential Stuffing', 'Breaches', 'Identity', 'Password Auditing']
+    tags: ['Credential Stuffing', 'Breaches', 'Identity', 'Password Auditing'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External breach database (requires verified domain ownership / paid API subscription).'
   },
   {
     id: 'securitytrails',
@@ -176,7 +190,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Search Open Technical Databases: DNS Records'
     },
     sampleWorkflow: 'Inspect historical A records for "api.company.com" to identify past bare-metal IPs that remain active and vulnerable to direct attacks.',
-    tags: ['Historical DNS', 'Passive DNS', 'Legacy Assets', 'Domain History']
+    tags: ['Historical DNS', 'Passive DNS', 'Legacy Assets', 'Domain History'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External commercial passive DNS dataset.'
   },
   {
     id: 'wayback-machine',
@@ -198,7 +214,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Search Open Websites/Domains: Search Engines'
     },
     sampleWorkflow: 'Query `https://web.archive.org/cdx/search/cdx?url=*.targetcompany.com/*&output=json&fl=original&collapse=urlkey` to dump all historic URLs and endpoints.',
-    tags: ['Web Archive', 'Historical Endpoints', 'JavaScript Recon', 'Deprecated APIs']
+    tags: ['Web Archive', 'Historical Endpoints', 'JavaScript Recon', 'Deprecated APIs'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External historical web index.'
   },
   {
     id: 'wappalyzer',
@@ -220,7 +238,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Gather Victim Host Information: Software'
     },
     sampleWorkflow: 'Analyze public web assets to build an inventory of deployed web servers (Nginx vs IIS), server-side language versions (PHP 7.x vs 8.x), and CMS installations.',
-    tags: ['Tech Stack', 'Fingerprinting', 'CMS', 'Software Versions']
+    tags: ['Tech Stack', 'Fingerprinting', 'CMS', 'Software Versions'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External profiler. SurfaceTrace inspects HTTP Server and X-Powered-By banners natively in scanner.ts.'
   },
   {
     id: 'cisa-kev',
@@ -242,7 +262,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Exploit Public-Facing Application'
     },
     sampleWorkflow: 'Cross-reference perimeter service versions discovered via Shodan/Censys against the KEV API to immediately isolate weaponized vectors.',
-    tags: ['CISA KEV', 'Zero-Days', 'Active Exploits', 'Perimeter Defense']
+    tags: ['CISA KEV', 'Zero-Days', 'Active Exploits', 'Perimeter Defense'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External threat intelligence catalog.'
   },
   {
     id: 'greynoise',
@@ -264,7 +286,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Active Scanning: Scanning IP Blocks'
     },
     sampleWorkflow: 'Enter external corporate gateway IPs into GreyNoise to ensure corporate devices are not flagged as malicious actors or scanner relays.',
-    tags: ['Internet Noise', 'Botnets', 'Threat Feeds', 'Perimeter Scanners']
+    tags: ['Internet Noise', 'Botnets', 'Threat Feeds', 'Perimeter Scanners'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External scanner honeypot telemetry.'
   },
   {
     id: 'bgpview',
@@ -286,7 +310,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Gather Victim Network Information: IP Addresses'
     },
     sampleWorkflow: 'Search enterprise name to retrieve registered ASN numbers (e.g. AS13335) and enumerate all announced IP prefixes to define full attack surface scope.',
-    tags: ['BGP', 'ASN', 'CIDR Blocks', 'Routing Intelligence']
+    tags: ['BGP', 'ASN', 'CIDR Blocks', 'Routing Intelligence'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'SurfaceTrace queries IP-API for live ASN allocation and cloud/CDN provider identification in scanner.ts.'
   },
   {
     id: 'abuseipdb',
@@ -308,7 +334,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Gather Victim Network Information: IP Addresses'
     },
     sampleWorkflow: 'Input company mail servers and VPN gateways to confirm clean abuse confidence scores and avoid transactional email blacklisting.',
-    tags: ['IP Reputation', 'Abuse Database', 'Blacklist Checks', 'Brute Force']
+    tags: ['IP Reputation', 'Abuse Database', 'Blacklist Checks', 'Brute Force'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External crowd-sourced reputation database.'
   },
   {
     id: 'dmarcian-inspector',
@@ -330,7 +358,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Phishing: Spearphishing Link / Domain Spoofing'
     },
     sampleWorkflow: 'Inspect root and subdomains to verify strict DMARC enforcement `p=reject` with comprehensive `rua` telemetry reporting.',
-    tags: ['DMARC', 'SPF', 'Email Spoofing', 'Phishing Defense']
+    tags: ['DMARC', 'SPF', 'Email Spoofing', 'Phishing Defense'],
+    leveragedBySurfaceTrace: true,
+    surfaceTraceIntegration: 'Natively implemented: scanner.ts evaluates SPF string mechanisms and DMARC p=reject / p=quarantine policies directly via DoH TXT lookups.'
   },
   {
     id: 'can-i-take-over-xyz',
@@ -352,7 +382,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Compromise Infrastructure: Server Hijacking'
     },
     sampleWorkflow: 'Identify CNAME records returning NXDOMAIN or provider 404 error pages, match against provider entries, and immediately delete the DNS record.',
-    tags: ['Subdomain Takeover', 'Dangling CNAME', 'Cloud Hijack', 'DNS Hygiene']
+    tags: ['Subdomain Takeover', 'Dangling CNAME', 'Cloud Hijack', 'DNS Hygiene'],
+    leveragedBySurfaceTrace: true,
+    surfaceTraceIntegration: 'Natively implemented: scanner.ts inspects CNAME records against 16+ cloud signatures (AWS S3, Azure, Heroku, GitHub Pages, etc.) to flag dangling takeovers.'
   },
   {
     id: 'project-discovery-subfinder',
@@ -374,7 +406,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Search Open Technical Databases: DNS Records'
     },
     sampleWorkflow: 'Download Chaos dataset or run passive Subfinder against target domains to map out complete secondary and tertiary subdomains.',
-    tags: ['Subdomains', 'Passive Discovery', 'Fast Enumeration', 'Asset Discovery']
+    tags: ['Subdomains', 'Passive Discovery', 'Fast Enumeration', 'Asset Discovery'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External Go CLI tool. SurfaceTrace leverages crt.sh and parallel DNS dictionaries for non-CLI web scanning.'
   },
   {
     id: 'virustotal',
@@ -396,7 +430,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Search Open Technical Databases'
     },
     sampleWorkflow: 'Enter target domain to inspect VirusTotal relations graph: identify communicating files, detected URLs, and sibling domains sharing IPs.',
-    tags: ['Malware', 'Domain Reputation', 'Safe Browsing', 'Graph Intel']
+    tags: ['Malware', 'Domain Reputation', 'Safe Browsing', 'Graph Intel'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External threat telemetry platform.'
   },
   {
     id: 'robtex',
@@ -418,7 +454,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Gather Victim Network Information: DNS'
     },
     sampleWorkflow: 'Run reverse IP lookups to discover all other websites co-hosted on your server, preventing lateral risk from adjacent compromised sites.',
-    tags: ['Reverse DNS', 'Shared Hosting', 'Network Graph', 'DNS Graph']
+    tags: ['Reverse DNS', 'Shared Hosting', 'Network Graph', 'DNS Graph'],
+    leveragedBySurfaceTrace: false,
+    surfaceTraceIntegration: 'External passive DNS network graph.'
   },
   {
     id: 'securityheaders',
@@ -440,7 +478,9 @@ export const OSINT_TOOLS: OsintTool[] = [
       techniqueName: 'Gather Victim Host Information: Client Configurations'
     },
     sampleWorkflow: 'Audit all company web portals to enforce mandatory HSTS preloading, robust CSP nonces, and `X-Content-Type-Options: nosniff`.',
-    tags: ['HTTP Headers', 'HSTS', 'CSP', 'Clickjacking Defense']
+    tags: ['HTTP Headers', 'HSTS', 'CSP', 'Clickjacking Defense'],
+    leveragedBySurfaceTrace: true,
+    surfaceTraceIntegration: 'Natively implemented: inspectHttp() in scanner.ts probes target endpoints directly to evaluate HSTS, CSP, XFO, XCTO, Referrer-Policy, and cookie security flags.'
   }
 ];
 
