@@ -3,6 +3,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { performEasmScan } from './server/scanner';
 import { generateThreatBriefing } from './server/gemini';
+import { fetchDomainVulnerabilityIntel, checkPwnedPasswordHash } from './server/vulnerabilities';
 
 async function startServer() {
   const app = express();
@@ -28,6 +29,37 @@ async function startServer() {
     } catch (err: any) {
       console.error('Scan error:', err);
       return res.status(500).json({ error: err.message || 'Failed to scan domain' });
+    }
+  });
+
+  // Dedicated Breach & Leaked Credentials Intel endpoint
+  app.get('/api/vulnerabilities/credentials', async (req, res) => {
+    const domain = req.query.domain as string;
+    if (!domain) {
+      return res.status(400).json({ error: 'Domain parameter is required' });
+    }
+
+    try {
+      const data = await fetchDomainVulnerabilityIntel(domain);
+      return res.json(data);
+    } catch (err: any) {
+      console.error('Credential vulnerability query error:', err);
+      return res.status(500).json({ error: err.message || 'Failed to query credential intelligence' });
+    }
+  });
+
+  // K-Anonymity Pwned Passwords SHA-1 range check
+  app.post('/api/vulnerabilities/check-password-hash', async (req, res) => {
+    const { prefix } = req.body;
+    if (!prefix || typeof prefix !== 'string' || prefix.length !== 5) {
+      return res.status(400).json({ error: 'Valid 5-character SHA-1 hash prefix is required' });
+    }
+
+    try {
+      const results = await checkPwnedPasswordHash(prefix);
+      return res.json({ prefix: prefix.toUpperCase(), matches: results });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to query Pwned Passwords API' });
     }
   });
 

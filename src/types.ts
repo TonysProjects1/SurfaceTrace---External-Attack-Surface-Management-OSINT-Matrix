@@ -20,6 +20,17 @@ export interface NonCompliantResource {
   assetUrl?: string;
 }
 
+export interface EvaluatedResource {
+  type: 'subdomain' | 'dns_record' | 'http_header' | 'certificate' | 'cookie' | 'port' | 'endpoint' | 'whois';
+  resourceIdentifier: string;
+  status: 'COMPLIANT' | 'NON_COMPLIANT' | 'PARTIALLY_COMPLIANT';
+  evaluatedConfiguration: string;
+  complianceCriteria: string;
+  reperformanceSource: string;
+  reperformanceCommand: string;
+  assetUrl?: string;
+}
+
 export interface ComplianceControlMapping {
   framework: 'NIST_SP_800_53' | 'NIST_CSF' | 'CIS_V8' | 'ISO_27001' | 'PCI_DSS';
   frameworkLabel: string;
@@ -120,6 +131,72 @@ export interface NetworkInfo {
   hostingType?: 'Cloudflare CDN' | 'AWS' | 'Google Cloud' | 'Microsoft Azure' | 'Fastly' | 'Akamai' | 'DigitalOcean' | 'Standard Hosting' | 'Unknown';
 }
 
+export interface BreachIncident {
+  Name: string;
+  Title: string;
+  Domain: string;
+  BreachDate: string;
+  AddedDate: string;
+  ModifiedDate: string;
+  PwnCount: number;
+  Description: string;
+  LogoPath?: string;
+  DataClasses: string[];
+  IsVerified: boolean;
+  IsFabricated: boolean;
+  IsSensitive: boolean;
+  IsRetired: boolean;
+  IsSpamList: boolean;
+}
+
+export interface CompromisedUrlOccurrence {
+  url: string;
+  occurrence: number;
+  type: 'Employee' | 'Client' | 'User';
+}
+
+export interface StealerIntelligence {
+  totalCredentials: number;
+  totalStealersIndexed: number;
+  employeesInfected: number;
+  usersInfected: number;
+  thirdPartiesInfected: number;
+  lastEmployeeCompromised?: string;
+  lastUserCompromised?: string;
+  stealerFamilies: Record<string, number>;
+  topCompromisedUrls: CompromisedUrlOccurrence[];
+  source: string;
+}
+
+export interface GitExposureDork {
+  label: string;
+  category: 'Credentials' | 'Cloud Secrets' | 'Private Keys' | 'Database Config' | 'Internal URLs';
+  query: string;
+  searchUrl: string;
+  riskDescription: string;
+  severity: Severity;
+}
+
+export interface VulnerabilityBreachData {
+  domain: string;
+  lastQueriedAt: string;
+  status: 'ANALYZED' | 'WARNING' | 'CRITICAL_RISK' | 'CLEAN';
+  riskScore: number; // 0-100
+  totalExposedCredentials: number;
+  employeeLoginsCompromised: number;
+  clientCredentialsCompromised: number;
+  breachesCount: number;
+  breaches: BreachIncident[];
+  stealerIntel: StealerIntelligence | null;
+  dorks: GitExposureDork[];
+  remediationRoadmap: {
+    priority: number;
+    title: string;
+    action: string;
+    standard: string;
+  }[];
+}
+
 export interface EasmScanResult {
   domain: string;
   targetUrl: string;
@@ -154,6 +231,7 @@ export interface EasmScanResult {
   whois: WhoisInfo;
   network: NetworkInfo;
   findings: SecurityFinding[];
+  vulnerabilities?: VulnerabilityBreachData;
 }
 
 export interface OsintTool {

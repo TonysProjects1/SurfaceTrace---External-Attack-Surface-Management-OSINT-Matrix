@@ -1,4 +1,5 @@
 import { EasmScanResult, SecurityFinding, DnsRecord, SubdomainAsset, CertificateInfo, HttpHeaderCheck, EmailSecurityPosture, WhoisInfo, NetworkInfo, Severity, ComplianceControlMapping } from '../src/types';
+import { fetchDomainVulnerabilityIntel } from './vulnerabilities';
 
 // Fallback subdomains to check
 const COMMON_SUBDOMAINS = [
@@ -479,12 +480,13 @@ export async function performEasmScan(rawDomain: string): Promise<EasmScanResult
     }
   };
 
-  // 3. Certificate Transparency and Subdomain Discovery
-  const [{ subdomains: ctSubdomains, certs }, httpPosture, whois, network] = await Promise.all([
+  // 3. Certificate Transparency, Subdomain Discovery, and Breach Intelligence
+  const [{ subdomains: ctSubdomains, certs }, httpPosture, whois, network, vulnerabilities] = await Promise.all([
     queryCrtSh(domain),
     inspectHttp(domain),
     queryRdap(domain),
-    queryNetwork(primaryIp)
+    queryNetwork(primaryIp),
+    fetchDomainVulnerabilityIntel(domain)
   ]);
 
   // Combine CT subdomains with common wordlist
@@ -842,6 +844,70 @@ export async function performEasmScan(rawDomain: string): Promise<EasmScanResult
     });
   }
 
+  // Check 9: Leaked Credentials & Infostealer Malware Infections
+  if (vulnerabilities && vulnerabilities.employeeLoginsCompromised > 0) {
+    deduction += Math.min(25, vulnerabilities.employeeLoginsCompromised * 4);
+    const topUrls = vulnerabilities.stealerIntel?.topCompromisedUrls
+      ?.filter(u => u.type === 'Employee')
+      ?.map(u => u.url)
+      ?.slice(0, 3)
+      ?.join(', ') || `corporate login portals for ${domain}`;
+
+    findings.push({
+      id: 'credentials-stealer-compromised',
+      title: `Compromised Employee Credentials in Infostealer Malware Logs (${vulnerabilities.employeeLoginsCompromised} Infected Corporate Hosts)`,
+      severity: 'CRITICAL',
+      category: 'Exposed Assets',
+      description: `Cybercrime threat intelligence feeds (Hudson Rock Cavalier) identified ${vulnerabilities.employeeLoginsCompromised} corporate endpoints infected with infostealer malware (e.g. RedLine, Lumma, Vidar). Stolen telemetry includes active browser session cookies, cleartext passwords, and authentication tokens for endpoints such as ${topUrls}.`,
+      evidence: `Active infostealer infections: ${vulnerabilities.employeeLoginsCompromised} employee computers, ${vulnerabilities.clientCredentialsCompromised} client accounts. Most recent employee infection: ${vulnerabilities.stealerIntel?.lastEmployeeCompromised || 'Recently detected'}.`,
+      remediation: 'Immediately revoke active browser sessions and OAuth tokens for affected users, enforce mandatory password resets, and mandate phishing-resistant FIDO2 / WebAuthn hardware security keys to prevent session cookie theft.',
+      mitre: {
+        id: 'T1539',
+        subId: 'T1589.001',
+        name: 'Steal Web Session Cookie & Compromised Credentials',
+        tacticId: 'TA0006',
+        tacticName: 'Credential Access',
+        description: 'Adversaries harvest session cookies and credentials from infostealer botnet logs to bypass multi-factor authentication and access corporate systems without generating new login alerts.',
+        adversaryUse: 'Imports stolen session cookies into browser or tool (e.g. Cookie-Editor) to authenticate directly into corporate SSO/dashboards.',
+        defenderMitigation: 'M1027: Password Policies & M1032: Multi-factor Authentication (FIDO2 / WebAuthn token binding).'
+      },
+      complianceControls: [
+        { framework: 'NIST_SP_800_53', frameworkLabel: 'NIST SP 800-53 Rev. 5', controlId: 'IA-2(1)', controlName: 'Multi-Factor Authentication to Access Accounts' },
+        { framework: 'NIST_SP_800_53', frameworkLabel: 'NIST SP 800-53 Rev. 5', controlId: 'IA-5', controlName: 'Authenticator Management & Credential Revocation' },
+        { framework: 'CIS_V8', frameworkLabel: 'CIS Controls v8', controlId: 'CIS Control 5.4', controlName: 'Restrict and Revoke Stolen Credential Sets' },
+        { framework: 'PCI_DSS', frameworkLabel: 'PCI-DSS v4.0', controlId: 'Requirement 8.3.6', controlName: 'Validate Authentication Credentials Against Known Compromises' },
+        { framework: 'ISO_27001', frameworkLabel: 'ISO/IEC 27001:2022', controlId: 'Control A.5.17', controlName: 'Authentication Information & Credential Security' }
+      ]
+    });
+  } else if (vulnerabilities && vulnerabilities.breaches.length > 0) {
+    deduction += Math.min(15, vulnerabilities.breaches.length * 5);
+    const breachTitles = vulnerabilities.breaches.map(b => b.Title).slice(0, 3).join(', ');
+    findings.push({
+      id: 'historical-domain-breaches',
+      title: `Historical Corporate Domain Breaches Indexed (${vulnerabilities.breaches.length} Incidents in HaveIBeenPwned)`,
+      severity: 'HIGH',
+      category: 'Domain Governance',
+      description: `The corporate domain has been impacted by ${vulnerabilities.breaches.length} historical data breach incident(s) (${breachTitles}), exposing corporate email addresses, hashes, and employee records in public leak archives.`,
+      evidence: `Indexed breaches: ${breachTitles}. Total documented compromised accounts: ${vulnerabilities.totalExposedCredentials.toLocaleString()}.`,
+      remediation: 'Audit active corporate accounts for password reuse across personal services. Enforce enterprise password manager usage and continuous breach monitoring.',
+      mitre: {
+        id: 'T1589',
+        subId: 'T1589.001',
+        name: 'Gather Victim Identity Information: Credentials',
+        tacticId: 'TA0007',
+        tacticName: 'Reconnaissance',
+        description: 'Adversaries collect leaked credentials from public breach databases to execute credential stuffing or password spraying attacks.',
+        adversaryUse: 'Tests leaked email and password combinations against corporate VPNs, OWA, and Okta/Azure AD portals.',
+        defenderMitigation: 'M1027: Password Policies & Continuous Breached Credential Screening.'
+      },
+      complianceControls: [
+        { framework: 'NIST_SP_800_53', frameworkLabel: 'NIST SP 800-53 Rev. 5', controlId: 'IA-5(1)', controlName: 'Password-Based Authentication Defense' },
+        { framework: 'CIS_V8', frameworkLabel: 'CIS Controls v8', controlId: 'CIS Control 5.2', controlName: 'Maintain Password Security and Screen for Leaks' },
+        { framework: 'PCI_DSS', frameworkLabel: 'PCI-DSS v4.0', controlId: 'Requirement 8.3.6', controlName: 'Screen Against Compromised Credential Lists' }
+      ]
+    });
+  }
+
   // Calculate overall attack surface health score (0-100)
   const overallScore = Math.max(10, Math.min(100, 100 - deduction));
   let grade: EasmScanResult['grade'] = 'F';
@@ -877,6 +943,7 @@ export async function performEasmScan(rawDomain: string): Promise<EasmScanResult
     httpPosture,
     whois,
     network,
-    findings
+    findings,
+    vulnerabilities
   };
 }

@@ -1,4 +1,4 @@
-import { EasmScanResult, ComplianceControlMapping, NonCompliantResource } from '../types';
+import { EasmScanResult, ComplianceControlMapping, NonCompliantResource, EvaluatedResource } from '../types';
 
 export type ComplianceFramework = 'NIST_SP_800_53' | 'NIST_CSF' | 'CIS_V8' | 'ISO_27001' | 'PCI_DSS';
 
@@ -21,6 +21,9 @@ export interface ComplianceControlCheck {
   mandatedFix: string;
   frameworkCitation: string;
   impactedResources?: NonCompliantResource[];
+  evaluatedResources?: EvaluatedResource[];
+  reperformanceCommand?: string;
+  reperformanceSource?: string;
 }
 
 export interface ComplianceFrameworkSummary {
@@ -111,6 +114,33 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     });
   }
 
+  const sc8Evaluated: EvaluatedResource[] = [
+    {
+      type: 'endpoint',
+      resourceIdentifier: `Endpoint: https://${scan.domain}:443`,
+      status: http.isHttps ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: http.isHttps 
+        ? `TLS transport active on port 443 with mandatory redirect from cleartext HTTP (Status: ${http.statusCode || 200})`
+        : 'Insecure plaintext HTTP (port 80) accepted without TLS encryption',
+      complianceCriteria: 'NIST SC-8 § 1: Protect confidentiality and integrity of transmitted information using modern cryptography (TLS 1.2+)',
+      reperformanceSource: `HTTP/HTTPS listener response at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I "http://${scan.domain}" | grep -Ei "^(HTTP|location):"`,
+      assetUrl: `https://${scan.domain}`
+    },
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: Strict-Transport-Security @ https://${scan.domain}`,
+      status: hasValidHsts ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: hstsHeader?.value 
+        ? `Strict-Transport-Security: ${hstsHeader.value}`
+        : 'Strict-Transport-Security header omitted from edge response',
+      complianceCriteria: 'RFC 6797 § 6.1: max-age >= 31536000 (1 year); includeSubDomains directive strongly required',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "strict-transport-security"`,
+      assetUrl: `https://${scan.domain}`
+    }
+  ];
+
   checks.push({
     id: 'nist-sc-8',
     framework: 'NIST_SP_800_53',
@@ -131,7 +161,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Verify that public web servers broadcast Strict-Transport-Security with max-age >= 31536000 and includeSubDomains.',
     mandatedFix: 'Configure web server (Nginx/Apache/Cloudflare) to send: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload.',
     frameworkCitation: 'NIST SP 800-53 Rev. 5 § SC-8 (Transmission Confidentiality and Integrity)',
-    impactedResources: sc8Impacted
+    impactedResources: sc8Impacted,
+    evaluatedResources: sc8Evaluated,
+    reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -Ei "^(HTTP/|strict-transport-security:)"`,
+    reperformanceSource: `Edge HTTPS response headers & TLS listener verification (port 443/80)`
   });
 
   // SI-8: Spam and Email Authentication Protection (DMARC / SPF / DKIM)
@@ -159,6 +192,31 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     });
   }
 
+  const si8Evaluated: EvaluatedResource[] = [
+    {
+      type: 'dns_record',
+      resourceIdentifier: `DNS TXT Record: _dmarc.${scan.domain}`,
+      status: isDmarcEnforced ? 'COMPLIANT' : isDmarcMonitoring ? 'PARTIALLY_COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: email.dmarc.rawRecord 
+        ? email.dmarc.rawRecord 
+        : 'DMARC TXT record absent from authoritative DNS zone',
+      complianceCriteria: 'CISA BOD 18-01 & NIST SI-8: DMARC policy must enforce "p=reject" or "p=quarantine" with valid aggregate reporting (rua=mailto:...)',
+      reperformanceSource: `Authoritative DNS TXT lookup at _dmarc.${scan.domain}`,
+      reperformanceCommand: `dig +short TXT _dmarc.${scan.domain}`
+    },
+    {
+      type: 'dns_record',
+      resourceIdentifier: `DNS TXT Record: ${scan.domain} (SPF)`,
+      status: hasSpf && !isSpfWeak ? 'COMPLIANT' : hasSpf ? 'PARTIALLY_COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: email.spf.rawRecord 
+        ? email.spf.rawRecord 
+        : 'SPF TXT record absent from authoritative DNS zone',
+      complianceCriteria: 'RFC 7208 / NIST SI-8(2): Valid SPF syntax designating authorized MTAs terminating with "-all" or "~all"',
+      reperformanceSource: `Authoritative DNS TXT lookup at ${scan.domain}`,
+      reperformanceCommand: `dig +short TXT ${scan.domain} | grep "v=spf1"`
+    }
+  ];
+
   checks.push({
     id: 'nist-si-8',
     framework: 'NIST_SP_800_53',
@@ -181,7 +239,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Inspect DNS zone for valid DMARC with policy set to quarantine or reject (p=reject preferred) and valid RUA reporting destination.',
     mandatedFix: `Publish at _dmarc.${scan.domain}: "v=DMARC1; p=reject; sp=reject; pct=100; rua=mailto:dmarc-reports@${scan.domain}".`,
     frameworkCitation: 'NIST SP 800-53 Rev. 5 § SI-8 & CISA BOD 18-01',
-    impactedResources: si8Impacted
+    impactedResources: si8Impacted,
+    evaluatedResources: si8Evaluated,
+    reperformanceCommand: `dig +short TXT _dmarc.${scan.domain} && dig +short TXT ${scan.domain}`,
+    reperformanceSource: `Authoritative DNS TXT records via DNS-over-HTTPS (RFC 8484) / System Resolver`
   });
 
   // SC-7: Boundary Protection / Information Disclosure
@@ -196,6 +257,33 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
       assetUrl: `https://${scan.domain}`
     });
   }
+
+  const sc7Evaluated: EvaluatedResource[] = [
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: Server @ https://${scan.domain}`,
+      status: !hasServerBannerLeak ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: http.serverDisclosure 
+        ? `Server: ${http.serverDisclosure}`
+        : 'Server header suppressed or generic (No software version revealed)',
+      complianceCriteria: 'NIST SC-7(10): Prevent unauthorized information disclosure; mask software release versions and OS distributions',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^server:"`,
+      assetUrl: `https://${scan.domain}`
+    },
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: X-Powered-By @ https://${scan.domain}`,
+      status: !http.xPoweredByDisclosure ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: http.xPoweredByDisclosure 
+        ? `X-Powered-By: ${http.xPoweredByDisclosure}`
+        : 'Header absent (Technology runtime framework suppressed)',
+      complianceCriteria: 'CIS Benchmark & NIST SC-7(10): Strip runtime engine disclosures (PHP, ASP.NET, Express, Next.js)',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^x-powered-by:"`,
+      assetUrl: `https://${scan.domain}`
+    }
+  ];
 
   checks.push({
     id: 'nist-sc-7',
@@ -217,7 +305,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Confirm that server_tokens off, ServerTokens Prod, or WAF header masking is configured.',
     mandatedFix: 'Set "server_tokens off;" in Nginx or "ServerTokens Prod" in Apache. Strip X-Powered-By.',
     frameworkCitation: 'NIST SP 800-53 Rev. 5 § SC-7(10)',
-    impactedResources: sc7Impacted
+    impactedResources: sc7Impacted,
+    evaluatedResources: sc7Evaluated,
+    reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -Ei "^(server|x-powered-by):"`,
+    reperformanceSource: `Perimeter HTTP Response Headers (port 443)`
   });
 
   // CM-8: Information System Component Inventory (Asset Discovery)
@@ -230,27 +321,47 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     assetUrl: `https://${d.subdomain}`
   }));
 
+  const cm8Evaluated: EvaluatedResource[] = [
+    {
+      type: 'subdomain',
+      resourceIdentifier: `External DNS Zone & Hostname Inventory (${scan.subdomains.length} discovered subdomains)`,
+      status: danglingCnames.length === 0 ? 'PARTIALLY_COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: danglingCnames.length === 0
+        ? `Discovered ${scan.subdomains.length} public resolving hostnames across ${scan.network.asn ? `ASN ${scan.network.asn}` : 'perimeter hosting'}. 0 dangling CNAME records. (Note: Authorization status is unverified out-of-band; requires internal CMDB cross-reference to validate authorized vs shadow IT).`
+        : `${danglingCnames.length} dangling CNAME records identified: ${danglingCnames.map(d => `${d.subdomain} -> ${d.cname || 'unresolved'}`).join(', ')}`,
+      complianceCriteria: 'NIST SP 800-53 CM-8(1): Maintain an accurate, updated inventory of all system components; identify and decommission unauthorized/orphaned assets',
+      reperformanceSource: `DNS CNAME and A record resolution across Certificate Transparency discovered subdomains`,
+      reperformanceCommand: `curl -s "https://crt.sh/?q=%25.${scan.domain}&output=json" | jq -r '.[].name_value' | sort -u | head -n 15`,
+      assetUrl: `https://${scan.domain}`
+    }
+  ];
+
   checks.push({
     id: 'nist-cm-8',
     framework: 'NIST_SP_800_53',
     frameworkLabel: 'NIST SP 800-53 Rev. 5',
     controlId: 'CM-8(1)',
-    controlName: 'Information System Component Inventory & Perimeter Audit',
+    controlName: 'Information System Component Inventory & Perimeter Reconciliation',
     controlFamily: 'Configuration Management (CM)',
-    status: danglingCnames.length === 0 ? 'COMPLIANT' : 'NON_COMPLIANT',
+    status: danglingCnames.length === 0 ? 'PARTIALLY_COMPLIANT' : 'NON_COMPLIANT',
     scoreImpact: 15,
-    description: 'Requires maintaining an accurate, updated inventory of all public-facing assets, cloud endpoints, and DNS pointers without orphaned dependencies.',
+    description: 'Requires maintaining an accurate, updated inventory of all public-facing components, cloud endpoints, and DNS pointers without orphaned dependencies or untracked shadow IT.',
     testedArtifact: `Public DNS zone & CT logs (${scan.subdomains.length} subdomains audited)`,
     observedEvidence: danglingCnames.length === 0
-      ? `All ${scan.subdomains.length} discovered subdomains map to valid infrastructure with no dangling cloud records.`
+      ? `Discovered ${scan.subdomains.length} external hostnames. 0 dangling CNAMEs, but external inventory requires CMDB ingestion to verify component authorization.`
       : `Found ${danglingCnames.length} dangling CNAME records susceptible to subdomain takeover.`,
     technicalFinding: danglingCnames.length === 0
-      ? 'Asset governance and cloud resource decommissioning validated.'
+      ? `External attack surface discovery identified ${scan.subdomains.length} resolving hostnames across ASN ${scan.network.asn || 'Cloud Edge'}. While no dangling CNAME takeover vectors were observed, an external vantage point cannot independently attest to corporate authorization. Full compliance with CM-8(1) requires reconciling this discovered delta against internal CMDB/cloud tenant registries.`
       : `Critical asset management failure: dangling cloud resource pointers detected (${danglingCnames.map(d => d.subdomain).join(', ')}).`,
-    auditorGuidance: 'Review DNS decommissioning procedures. Ensure CNAME records pointing to decommissioned S3/Azure/Heroku endpoints are purged.',
-    mandatedFix: 'Immediately delete orphaned DNS CNAME records or claim the corresponding backend cloud tenant resources.',
+    auditorGuidance: 'Cross-reference external discovery results against the formal enterprise CMDB (ServiceNow/Jira) and cloud tenant asset registers to detect shadow IT.',
+    mandatedFix: danglingCnames.length === 0 
+      ? 'Ingest externally discovered subdomains into the central enterprise CMDB and implement continuous automated reconnaissance reconciliation.'
+      : 'Immediately delete orphaned DNS CNAME records or claim the corresponding backend cloud tenant resources.',
     frameworkCitation: 'NIST SP 800-53 Rev. 5 § CM-8 (Information System Component Inventory)',
-    impactedResources: cm8Impacted
+    impactedResources: cm8Impacted,
+    evaluatedResources: cm8Evaluated,
+    reperformanceCommand: `curl -s "https://crt.sh/?q=%25.${scan.domain}&output=json" | jq -r '.[].name_value' | sort -u | head -n 20`,
+    reperformanceSource: `Certificate Transparency Logs (RFC 6962) & Authoritative DNS Resolution`
   });
 
   // SC-12: Cryptographic Key / Certificate Establishment and Management
@@ -269,6 +380,22 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
       currentValue: `${c.daysRemaining} days remaining`,
       expectedValue: 'Automated renewal scheduled >30 days before expiration'
     }))
+  ];
+
+  const primaryCert = scan.certificates[0];
+  const sc12Evaluated: EvaluatedResource[] = [
+    {
+      type: 'certificate',
+      resourceIdentifier: `TLS Leaf Certificate (CN: ${primaryCert?.commonName || scan.domain})`,
+      status: expiredCerts.length === 0 && expiringSoonCerts.length === 0 ? 'COMPLIANT' : expiredCerts.length > 0 ? 'NON_COMPLIANT' : 'PARTIALLY_COMPLIANT',
+      evaluatedConfiguration: primaryCert
+        ? `Issuer: "${primaryCert.issuer || 'Trusted Public CA'}"; Validity NotAfter: ${primaryCert.notAfter || 'Active'} (${primaryCert.daysRemaining !== undefined ? `${primaryCert.daysRemaining} days remaining` : 'Valid'}); Expired: ${primaryCert.isExpired ? 'true' : 'false'}`
+        : 'Active TLS certificate presented during boundary TLS handshake with valid expiration window',
+      complianceCriteria: 'NIST SC-12 / SC-17: Active, unrevoked public key infrastructure certificates with automated lifecycle renewal >=30 days before expiration',
+      reperformanceSource: `TLS Handshake on port 443 (X.509 Certificate Chain)`,
+      reperformanceCommand: `openssl s_client -connect ${scan.domain}:443 -servername ${scan.domain} </dev/null 2>/dev/null | openssl x509 -noout -issuer -dates -subject`,
+      assetUrl: `https://${scan.domain}`
+    }
   ];
 
   checks.push({
@@ -293,7 +420,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Verify automated ACME/Let\'s Encrypt or enterprise PKI renewal pipelines.',
     mandatedFix: 'Provision renewed certificates with ECDSA or RSA-2048+ keys and automated 60-day renewal cycle.',
     frameworkCitation: 'NIST SP 800-53 Rev. 5 § SC-12 & SC-17',
-    impactedResources: sc12Impacted
+    impactedResources: sc12Impacted,
+    evaluatedResources: sc12Evaluated,
+    reperformanceCommand: `openssl s_client -connect ${scan.domain}:443 -servername ${scan.domain} </dev/null 2>/dev/null | openssl x509 -noout -issuer -dates -subject`,
+    reperformanceSource: `Direct TLS handshake (X.509 ASN.1 certificate parser) on port 443`
   });
 
   // --- 2. NIST CSF v2.0 Controls ---
@@ -323,6 +453,31 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     }
   }
 
+  const prDs02Evaluated: EvaluatedResource[] = [
+    {
+      type: 'endpoint',
+      resourceIdentifier: `Apex Service: http://${scan.domain} (Port 80) -> https://${scan.domain} (Port 443)`,
+      status: http.isHttps ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: http.isHttps 
+        ? `Cleartext port 80 requests permanently redirected (301/308) to HTTPS. TLS transport actively enforced.`
+        : 'Cleartext HTTP communication permitted without mandatory TLS redirection.',
+      complianceCriteria: 'NIST CSF v2.0 PR.DS-02: Transmitted data is cryptographically protected against eavesdropping and tampering',
+      reperformanceSource: `HTTP Transport Listener on port 80/443`,
+      reperformanceCommand: `curl -s -I "http://${scan.domain}" | grep -Ei "^(HTTP|location):"`,
+      assetUrl: `https://${scan.domain}`
+    },
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: Strict-Transport-Security @ https://${scan.domain}`,
+      status: hasValidHsts ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: hstsHeader?.value ? `Strict-Transport-Security: ${hstsHeader.value}` : 'Header missing from HTTP response',
+      complianceCriteria: 'NIST CSF PR.DS-02: Mandatory cryptographic browser pinning (HSTS RFC 6797)',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "strict-transport-security"`,
+      assetUrl: `https://${scan.domain}`
+    }
+  ];
+
   checks.push({
     id: 'csf-pr-ds-02',
     framework: 'NIST_CSF',
@@ -341,7 +496,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Ensure all HTTP requests are permanently redirected (301) to HTTPS and HSTS is enforced.',
     mandatedFix: 'Deploy 301 redirects to HTTPS on all edge proxies and broadcast HSTS headers.',
     frameworkCitation: 'NIST CSF v2.0 Category PR.DS-02',
-    impactedResources: prDs02Impacted
+    impactedResources: prDs02Impacted,
+    evaluatedResources: prDs02Evaluated,
+    reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -Ei "^(HTTP/|strict-transport-security:)"`,
+    reperformanceSource: `HTTP Response Headers & Redirect Chain (port 80 -> 443)`
   });
 
   // PR.IR-01: Technology Infrastructure Protected (Content Security Policy & Frame Options)
@@ -377,6 +535,39 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     });
   }
 
+  const prIr01Evaluated: EvaluatedResource[] = [
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: Content-Security-Policy @ https://${scan.domain}`,
+      status: hasCsp ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: cspHeader?.value ? `Content-Security-Policy: ${cspHeader.value}` : 'CSP header absent from HTTP response',
+      complianceCriteria: 'NIST CSF PR.IR-01 / W3C CSP Level 3: Restrict script execution sources and prevent cross-site scripting (XSS)',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^content-security-policy:"`,
+      assetUrl: `https://${scan.domain}`
+    },
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: X-Frame-Options @ https://${scan.domain}`,
+      status: hasXfo ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: xfoHeader?.value ? `X-Frame-Options: ${xfoHeader.value}` : 'X-Frame-Options header absent',
+      complianceCriteria: 'RFC 7034: Prevent UI clickjacking and iframe framing (DENY or SAMEORIGIN)',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^x-frame-options:"`,
+      assetUrl: `https://${scan.domain}`
+    },
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: X-Content-Type-Options @ https://${scan.domain}`,
+      status: hasXcto ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: xctoHeader?.value ? `X-Content-Type-Options: ${xctoHeader.value}` : 'X-Content-Type-Options header absent',
+      complianceCriteria: 'W3C Fetch Spec: Enforce MIME-type sniffing mitigation (nosniff)',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^x-content-type-options:"`,
+      assetUrl: `https://${scan.domain}`
+    }
+  ];
+
   checks.push({
     id: 'csf-pr-ir-01',
     framework: 'NIST_CSF',
@@ -395,7 +586,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Validate presence of restrictive CSP directives (default-src, script-src) and X-Frame-Options: DENY.',
     mandatedFix: 'Add Content-Security-Policy and X-Frame-Options response headers.',
     frameworkCitation: 'NIST CSF v2.0 Category PR.IR-01',
-    impactedResources: prIr01Impacted
+    impactedResources: prIr01Impacted,
+    evaluatedResources: prIr01Evaluated,
+    reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -Ei "^(content-security-policy|x-frame-options|x-content-type-options):"`,
+    reperformanceSource: `Perimeter HTTP Response Armor Headers (RFC 7034 & W3C CSP3)`
   });
 
   // ID.AM-02: External Assets Inventoried
@@ -408,6 +602,21 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     assetUrl: `https://${d.subdomain}`
   }));
 
+  const idAm02Evaluated: EvaluatedResource[] = [
+    {
+      type: 'subdomain',
+      resourceIdentifier: `External Perimeter Map: ${scan.subdomains.length} hostnames across ASN ${scan.network.asn || 'Cloud Edge'}`,
+      status: danglingCnames.length === 0 ? 'PARTIALLY_COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: danglingCnames.length === 0
+        ? `Discovered ${scan.subdomains.length} public resolving endpoints. 0 dangling CNAME takeovers. (Limitation: Observed external perimeter is unverified out-of-band; authorization status requires internal CMDB/asset tag reconciliation to certify absence of Shadow IT).`
+        : `${danglingCnames.length} dangling CNAME pointers identified: ${danglingCnames.map(d => `${d.subdomain} -> ${d.cname || 'unresolved'}`).join(', ')}`,
+      complianceCriteria: 'NIST CSF v2.0 ID.AM-02: Public internet perimeter assets and external services are cataloged, inventoried, and verified against authorized enterprise baselines',
+      reperformanceSource: `Certificate Transparency Logs & Authoritative DNS Resolution`,
+      reperformanceCommand: `curl -s "https://crt.sh/?q=%25.${scan.domain}&output=json" | jq -r '.[].name_value' | sort -u | head -n 15`,
+      assetUrl: `https://${scan.domain}`
+    }
+  ];
+
   checks.push({
     id: 'csf-id-am-02',
     framework: 'NIST_CSF',
@@ -415,16 +624,25 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     controlId: 'ID.AM-02',
     controlName: 'Software, Systems & External Services Inventoried',
     controlFamily: 'IDENTIFY (ID.AM: Asset Management)',
-    status: scan.subdomains.length > 0 && danglingCnames.length === 0 ? 'COMPLIANT' : danglingCnames.length > 0 ? 'NON_COMPLIANT' : 'PARTIALLY_COMPLIANT',
+    status: danglingCnames.length === 0 ? 'PARTIALLY_COMPLIANT' : 'NON_COMPLIANT',
     scoreImpact: 15,
-    description: 'External digital surface, public hostnames, and cloud infrastructure components are continuously identified and tracked.',
+    description: 'External digital surface, public hostnames, and cloud infrastructure components are continuously identified, tracked, and reconciled against authorized baselines.',
     testedArtifact: `${scan.subdomains.length} subdomains correlated via DNS & CT`,
-    observedEvidence: `Cataloged ${scan.subdomains.length} external hostnames across ASN ${scan.network.asn || 'Cloud Edge'}.`,
-    technicalFinding: danglingCnames.length === 0 ? 'Asset perimeter comprehensively cataloged.' : 'Uncontrolled external assets identified.',
-    auditorGuidance: 'Cross-reference discovered subdomains against official CMDB/Asset register.',
-    mandatedFix: 'Reconcile external DNS entries with authorized asset inventories.',
+    observedEvidence: danglingCnames.length === 0
+      ? `Enumerated ${scan.subdomains.length} public hostnames across ASN ${scan.network.asn || 'Cloud Edge'}. 0 dangling CNAMEs, but asset authorization remains unverified without CMDB cross-reference.`
+      : `Critical takeover risk: ${danglingCnames.length} dangling CNAME records identified.`,
+    technicalFinding: danglingCnames.length === 0 
+      ? `External attack surface enumeration discovered ${scan.subdomains.length} resolving hostnames. However, an external scanner cannot determine administrative authorization out-of-band. To satisfy ID.AM-02, this externally observed delta must be reconciled against the corporate CMDB (e.g. ServiceNow, AWS Organizations) to classify legitimate assets and decommission shadow IT.`
+      : `Uncontrolled external assets identified: ${danglingCnames.length} subdomains point to abandoned third-party services, creating immediate subdomain takeover exposure.`,
+    auditorGuidance: 'Review external scan deltas against the authoritative enterprise CMDB. Inquire whether periodic reconciliation occurs between network boundary discovery and IT asset registers.',
+    mandatedFix: danglingCnames.length === 0
+      ? 'Establish automated synchronization between external attack surface discovery (EASM) and internal CMDB/ITAM asset records to validate asset authorization and eliminate shadow IT.'
+      : 'Immediately purge dangling DNS CNAME records or claim the orphaned cloud resources.',
     frameworkCitation: 'NIST CSF v2.0 Category ID.AM-02',
-    impactedResources: idAm02Impacted
+    impactedResources: idAm02Impacted,
+    evaluatedResources: idAm02Evaluated,
+    reperformanceCommand: `curl -s "https://crt.sh/?q=%25.${scan.domain}&output=json" | jq -r '.[].name_value' | sort -u | head -n 15`,
+    reperformanceSource: `RFC 6962 CT Log Aggregator (crt.sh) and Authoritative Name Resolution`
   });
 
   // --- 3. CIS Controls v8 Controls ---
@@ -442,6 +660,19 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     });
   }
 
+  const cis92Evaluated: EvaluatedResource[] = [
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: Strict-Transport-Security @ https://${scan.domain}`,
+      status: hasValidHsts ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: hstsHeader?.value ? `Strict-Transport-Security: ${hstsHeader.value}` : 'Header absent from edge response',
+      complianceCriteria: 'CIS Controls v8 Safeguard 9.2: Ensure only modern TLS protocols are used with HSTS max-age >= 31536000',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^strict-transport-security:"`,
+      assetUrl: `https://${scan.domain}`
+    }
+  ];
+
   checks.push({
     id: 'cis-9-2',
     framework: 'CIS_V8',
@@ -458,7 +689,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Verify browser warning triggers on protocol downgrade.',
     mandatedFix: 'Disable TLS 1.0/1.1 and enable HSTS with max-age >= 31536000.',
     frameworkCitation: 'CIS Controls v8 § 9.2',
-    impactedResources: cis92Impacted
+    impactedResources: cis92Impacted,
+    evaluatedResources: cis92Evaluated,
+    reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "strict-transport-security"`,
+    reperformanceSource: `HTTP Response Headers on port 443`
   });
 
   // CIS 9.5: Implement DMARC
@@ -474,6 +708,18 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
       expectedValue: 'v=DMARC1; p=reject; pct=100;'
     });
   }
+
+  const cis95Evaluated: EvaluatedResource[] = [
+    {
+      type: 'dns_record',
+      resourceIdentifier: `DNS TXT Record: _dmarc.${scan.domain}`,
+      status: isDmarcEnforced ? 'COMPLIANT' : isDmarcMonitoring ? 'PARTIALLY_COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: email.dmarc.rawRecord ? email.dmarc.rawRecord : 'DMARC TXT record missing from authoritative DNS',
+      complianceCriteria: 'CIS Controls v8 Safeguard 9.5: Configure DMARC with policy set to "quarantine" or "reject"',
+      reperformanceSource: `Authoritative DNS TXT lookup at _dmarc.${scan.domain}`,
+      reperformanceCommand: `dig +short TXT _dmarc.${scan.domain}`
+    }
+  ];
 
   checks.push({
     id: 'cis-9-5',
@@ -491,7 +737,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Review DMARC record to ensure policy is not set to none.',
     mandatedFix: 'Update DMARC policy tag to "p=reject" or "p=quarantine".',
     frameworkCitation: 'CIS Controls v8 § 9.5',
-    impactedResources: cis95Impacted
+    impactedResources: cis95Impacted,
+    evaluatedResources: cis95Evaluated,
+    reperformanceCommand: `dig +short TXT _dmarc.${scan.domain}`,
+    reperformanceSource: `DNS-over-HTTPS (DoH) / Authoritative DNS (TXT Record)`
   });
 
   // CIS 4.1: Establish and Maintain a Secure Asset Configuration
@@ -517,6 +766,31 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     });
   }
 
+  const cis41Evaluated: EvaluatedResource[] = [
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: Server & X-Powered-By @ https://${scan.domain}`,
+      status: !hasServerBannerLeak ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: !hasServerBannerLeak 
+        ? `Server header sanitized (${http.serverDisclosure || 'Suppressed'}); X-Powered-By absent`
+        : `Server header leaked: "${http.serverDisclosure || http.xPoweredByDisclosure}"`,
+      complianceCriteria: 'CIS Controls v8 Safeguard 4.1: Mask or suppress web server banners and technology signatures',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -Ei "^(server|x-powered-by):"`,
+      assetUrl: `https://${scan.domain}`
+    },
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: X-Content-Type-Options @ https://${scan.domain}`,
+      status: hasXcto ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: xctoHeader?.value ? `X-Content-Type-Options: ${xctoHeader.value}` : 'Header absent',
+      complianceCriteria: 'CIS Controls v8 Safeguard 4.1: Enable MIME sniffing mitigation (nosniff)',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^x-content-type-options:"`,
+      assetUrl: `https://${scan.domain}`
+    }
+  ];
+
   checks.push({
     id: 'cis-4-1',
     framework: 'CIS_V8',
@@ -535,7 +809,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Ensure all perimeter proxies strip identifying software headers.',
     mandatedFix: 'Mask or strip Server, X-Powered-By, and X-AspNet-Version headers.',
     frameworkCitation: 'CIS Controls v8 § 4.1',
-    impactedResources: cis41Impacted
+    impactedResources: cis41Impacted,
+    evaluatedResources: cis41Evaluated,
+    reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -Ei "^(server|x-powered-by|x-content-type-options):"`,
+    reperformanceSource: `Edge HTTP Response Headers (port 443)`
   });
 
   // --- 4. ISO/IEC 27001:2022 Controls ---
@@ -563,6 +840,30 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     });
   });
 
+  const isoA820Evaluated: EvaluatedResource[] = [
+    {
+      type: 'http_header',
+      resourceIdentifier: `Transport Control: Strict-Transport-Security @ https://${scan.domain}`,
+      status: hasValidHsts ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: hstsHeader?.value ? `Strict-Transport-Security: ${hstsHeader.value}` : 'Missing HSTS enforcement',
+      complianceCriteria: 'ISO/IEC 27001:2022 Annex A.8.20: Public network boundaries secured against cleartext protocol downgrade',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^strict-transport-security:"`,
+      assetUrl: `https://${scan.domain}`
+    },
+    {
+      type: 'dns_record',
+      resourceIdentifier: `DNS Routing & CNAME Hygiene (${scan.subdomains.length} hostnames)`,
+      status: danglingCnames.length === 0 ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: danglingCnames.length === 0 
+        ? `All ${scan.subdomains.length} subdomains route to active verified endpoints; 0 dangling aliases`
+        : `${danglingCnames.length} dangling CNAME pointers identified`,
+      complianceCriteria: 'ISO/IEC 27001:2022 Annex A.8.20: Network devices and external DNS routing properly configured',
+      reperformanceSource: `Authoritative DNS CNAME resolution`,
+      reperformanceCommand: `dig +short CNAME ${scan.domain}`
+    }
+  ];
+
   checks.push({
     id: 'iso-a-8-20',
     framework: 'ISO_27001',
@@ -581,7 +882,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Review perimeter architecture and external boundary defense configurations.',
     mandatedFix: 'Implement edge encryption and audit external DNS routing.',
     frameworkCitation: 'ISO/IEC 27001:2022 Annex A.8.20',
-    impactedResources: isoA820Impacted
+    impactedResources: isoA820Impacted,
+    evaluatedResources: isoA820Evaluated,
+    reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "strict-transport-security" && dig +short A ${scan.domain}`,
+    reperformanceSource: `Authoritative DNS Zone & Edge HTTPS Header (port 443)`
   });
 
   // ISO A.8.24: Use of Cryptography
@@ -607,6 +911,29 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     });
   }
 
+  const isoA824Evaluated: EvaluatedResource[] = [
+    {
+      type: 'endpoint',
+      resourceIdentifier: `Apex Transport: https://${scan.domain} (Port 443)`,
+      status: http.isHttps ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: http.isHttps ? 'Cryptographic TLS listener active with HTTP port 80 redirection' : 'Cleartext HTTP communication permitted',
+      complianceCriteria: 'ISO/IEC 27001:2022 Annex A.8.24: Rules for the effective use of cryptography defined and enforced',
+      reperformanceSource: `HTTP Transport Listener on port 80/443`,
+      reperformanceCommand: `curl -s -I "http://${scan.domain}" | grep -Ei "^(HTTP|location):"`,
+      assetUrl: `https://${scan.domain}`
+    },
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: Strict-Transport-Security @ https://${scan.domain}`,
+      status: hasValidHsts ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: hstsHeader?.value ? `Strict-Transport-Security: ${hstsHeader.value}` : 'Header missing',
+      complianceCriteria: 'ISO/IEC 27001:2022 Annex A.8.24: Mandate cryptographic policy enforcement via HSTS',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^strict-transport-security:"`,
+      assetUrl: `https://${scan.domain}`
+    }
+  ];
+
   checks.push({
     id: 'iso-a-8-24',
     framework: 'ISO_27001',
@@ -625,7 +952,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Inspect TLS configuration and verify cipher strengths.',
     mandatedFix: 'Enforce modern TLS suites and broadcast HSTS headers.',
     frameworkCitation: 'ISO/IEC 27001:2022 Annex A.8.24',
-    impactedResources: isoA824Impacted
+    impactedResources: isoA824Impacted,
+    evaluatedResources: isoA824Evaluated,
+    reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -Ei "^(HTTP/|strict-transport-security:)"`,
+    reperformanceSource: `TLS Listener (port 443) & HTTP Edge Headers`
   });
 
   // --- 5. PCI-DSS v4.0 Controls ---
@@ -653,6 +983,29 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     });
   }
 
+  const pci643Evaluated: EvaluatedResource[] = [
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: Content-Security-Policy @ https://${scan.domain}`,
+      status: hasCsp ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: cspHeader?.value ? `Content-Security-Policy: ${cspHeader.value}` : 'CSP header absent from HTTP response',
+      complianceCriteria: 'PCI-DSS v4.0 Requirement 6.4.3: Authorize all scripts and implement anti-tampering header controls',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^content-security-policy:"`,
+      assetUrl: `https://${scan.domain}`
+    },
+    {
+      type: 'http_header',
+      resourceIdentifier: `Header: X-Frame-Options @ https://${scan.domain}`,
+      status: hasXfo ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: xfoHeader?.value ? `X-Frame-Options: ${xfoHeader.value}` : 'X-Frame-Options header absent',
+      complianceCriteria: 'PCI-DSS v4.0 Requirement 6.4.1: Protect public web applications against clickjacking and UI framing',
+      reperformanceSource: `HTTPS edge response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^x-frame-options:"`,
+      assetUrl: `https://${scan.domain}`
+    }
+  ];
+
   checks.push({
     id: 'pci-req-6-4-3',
     framework: 'PCI_DSS',
@@ -671,7 +1024,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Ensure strict script-src, object-src and frame-ancestors policies are enforced.',
     mandatedFix: 'Deploy Content-Security-Policy and X-Frame-Options: DENY headers.',
     frameworkCitation: 'PCI-DSS v4.0 Requirement 6.4.3',
-    impactedResources: pci643Impacted
+    impactedResources: pci643Impacted,
+    evaluatedResources: pci643Evaluated,
+    reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -Ei "^(content-security-policy|x-frame-options):"`,
+    reperformanceSource: `Public Web Application Edge HTTP Headers (port 443)`
   });
 
   // PCI Req 8.2.2: Ensure Secure Cookie Transmission
@@ -683,6 +1039,23 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     currentValue: `Secure=${c.secure ? 'true' : 'false'}, HttpOnly=${c.httpOnly ? 'true' : 'false'}`,
     expectedValue: 'Secure; HttpOnly; SameSite=Strict/Lax'
   }));
+
+  const pci822Evaluated: EvaluatedResource[] = [
+    {
+      type: 'cookie',
+      resourceIdentifier: `HTTP Set-Cookie Directives (${http.cookiesDetected.length} cookies detected)`,
+      status: insecureCookies.length === 0 ? 'COMPLIANT' : 'NON_COMPLIANT',
+      evaluatedConfiguration: http.cookiesDetected.length === 0 
+        ? 'No cookies transmitted in perimeter HTTP response headers'
+        : insecureCookies.length === 0
+        ? `All ${http.cookiesDetected.length} cookies enforce Secure=true and HttpOnly=true: ${http.cookiesDetected.map(c => `${c.name} [Secure; HttpOnly; SameSite=${c.sameSite || 'Lax'}]`).join('; ')}`
+        : `${insecureCookies.length} cookie(s) missing Secure or HttpOnly flags: ${insecureCookies.map(c => `${c.name} [Secure=${c.secure}, HttpOnly=${c.httpOnly}]`).join(', ')}`,
+      complianceCriteria: 'PCI-DSS v4.0 Requirement 8.2.2: Session and authentication cookies must contain Secure and HttpOnly flags',
+      reperformanceSource: `HTTPS edge Set-Cookie response headers at https://${scan.domain}`,
+      reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^set-cookie:"`,
+      assetUrl: `https://${scan.domain}`
+    }
+  ];
 
   checks.push({
     id: 'pci-req-8-2-2',
@@ -704,7 +1077,10 @@ export function evaluateCompliancePosture(scan: EasmScanResult): FullComplianceA
     auditorGuidance: 'Verify that every Set-Cookie response contains Secure; HttpOnly; SameSite=Lax/Strict.',
     mandatedFix: 'Set "Secure; HttpOnly; SameSite=Strict" attributes on all session and tracking cookies.',
     frameworkCitation: 'PCI-DSS v4.0 Requirement 8.2.2',
-    impactedResources: pci822Impacted
+    impactedResources: pci822Impacted,
+    evaluatedResources: pci822Evaluated,
+    reperformanceCommand: `curl -s -I -L "https://${scan.domain}" | grep -i "^set-cookie:"`,
+    reperformanceSource: `HTTP Response Headers (RFC 6265 Set-Cookie) on port 443`
   });
 
   // Compute Framework Summaries
