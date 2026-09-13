@@ -11,6 +11,15 @@ export interface MitreTechnique {
   defenderMitigation: string;
 }
 
+export interface NonCompliantResource {
+  type: 'subdomain' | 'dns_record' | 'http_header' | 'certificate' | 'cookie' | 'port' | 'endpoint';
+  resourceIdentifier: string;
+  observedIssue: string;
+  currentValue?: string;
+  expectedValue?: string;
+  assetUrl?: string;
+}
+
 export interface ComplianceControlMapping {
   framework: 'NIST_SP_800_53' | 'NIST_CSF' | 'CIS_V8' | 'ISO_27001' | 'PCI_DSS';
   frameworkLabel: string;
