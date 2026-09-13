@@ -447,6 +447,74 @@ class BrowserSqliteManager {
     await this.persistToIndexedDb();
   }
 
+  /**
+   * Returns list of recorded historical scans.
+   */
+  public async getScansList(): Promise<{ id: string; domain: string; timestamp: number; health_score: number; subdomain_count: number; findings_count: number; apex_ip: string; asn_org: string }[]> {
+    const res = await this.executeQuery(`
+      SELECT id, domain, timestamp, health_score, subdomain_count, findings_count, apex_ip, asn_org
+      FROM scans
+      ORDER BY timestamp DESC
+    `);
+    if (!res.columns || res.columns.length === 0) return [];
+    return res.values.map(row => ({
+      id: String(row[0]),
+      domain: String(row[1]),
+      timestamp: Number(row[2]),
+      health_score: Number(row[3]),
+      subdomain_count: Number(row[4]),
+      findings_count: Number(row[5]),
+      apex_ip: String(row[6] || ''),
+      asn_org: String(row[7] || '')
+    }));
+  }
+
+  /**
+   * Retrieves full snapshot details for a scan ID (scan, findings, subdomains).
+   */
+  public async getScanSnapshot(scanId: string): Promise<{
+    scan: any;
+    findings: { id: string; title: string; category: string; severity: string; description: string; remediation: string; affected_asset: string }[];
+    subdomains: { hostname: string; status: string; ip_address: string; cname_target: string; risk_note: string }[];
+  } | null> {
+    const db = await this.getDb();
+    const scanRes = db.exec(`SELECT * FROM scans WHERE id = '${scanId.replace(/'/g, "''")}'`);
+    if (!scanRes || scanRes.length === 0 || scanRes[0].values.length === 0) return null;
+
+    const scanCols = scanRes[0].columns;
+    const scanRow = scanRes[0].values[0];
+    const scanObj: Record<string, any> = {};
+    scanCols.forEach((col, idx) => {
+      scanObj[col] = scanRow[idx];
+    });
+
+    const findingsRes = db.exec(`SELECT id, title, category, severity, description, remediation, affected_asset FROM findings WHERE scan_id = '${scanId.replace(/'/g, "''")}'`);
+    const findings = (findingsRes && findingsRes.length > 0) ? findingsRes[0].values.map(r => ({
+      id: String(r[0]),
+      title: String(r[1]),
+      category: String(r[2]),
+      severity: String(r[3]),
+      description: String(r[4]),
+      remediation: String(r[5]),
+      affected_asset: String(r[6])
+    })) : [];
+
+    const subdomainsRes = db.exec(`SELECT hostname, status, ip_address, cname_target, risk_note FROM subdomains WHERE scan_id = '${scanId.replace(/'/g, "''")}'`);
+    const subdomains = (subdomainsRes && subdomainsRes.length > 0) ? subdomainsRes[0].values.map(r => ({
+      hostname: String(r[0]),
+      status: String(r[1]),
+      ip_address: String(r[2] || ''),
+      cname_target: String(r[3] || ''),
+      risk_note: String(r[4] || '')
+    })) : [];
+
+    return {
+      scan: scanObj,
+      findings,
+      subdomains
+    };
+  }
+
   // --- IndexedDB Persistence Helpers ---
 
   private async loadFromIndexedDb(): Promise<Uint8Array | null> {

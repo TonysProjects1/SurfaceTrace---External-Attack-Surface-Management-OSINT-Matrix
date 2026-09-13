@@ -2,11 +2,85 @@ import React, { useState } from 'react';
 import { EasmScanResult, DnsRecord, SubdomainAsset, CertificateInfo } from '../types';
 import { 
   Globe, Shield, Server, Lock, AlertTriangle, CheckCircle2, 
-  Search, Filter, ExternalLink, Calendar, Hash, ArrowRight, Layers
+  Search, Filter, ExternalLink, Calendar, Hash, ArrowRight, Layers,
+  Download, Copy, Check, Terminal, Cpu
 } from 'lucide-react';
 
 interface DigitalFootprintTabProps {
   scan: EasmScanResult;
+}
+
+export function inferSubdomainCategory(hostname: string, cname?: string): { 
+  label: string; 
+  badge: string; 
+  className: string; 
+  isRisk: boolean 
+} {
+  const h = hostname.toLowerCase();
+  const c = (cname || '').toLowerCase();
+
+  if (h.includes('vpn') || h.includes('remote') || h.includes('gateway') || h.includes('pulse') || h.includes('citrix')) {
+    return { 
+      label: 'SSL-VPN / Remote Access Gateway', 
+      badge: 'VPN / Gateway', 
+      className: 'bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300 border-purple-300 dark:border-purple-800', 
+      isRisk: true 
+    };
+  }
+  if (h.includes('api') || h.includes('graphql') || h.includes('rest') || h.includes('microservice')) {
+    return { 
+      label: 'API Gateway / Microservice', 
+      badge: 'API Endpoint', 
+      className: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/80 dark:text-cyan-300 border-cyan-300 dark:border-cyan-800', 
+      isRisk: false 
+    };
+  }
+  if (h.includes('dev') || h.includes('staging') || h.includes('uat') || h.includes('test') || h.includes('qa') || h.includes('preprod')) {
+    return { 
+      label: 'Pre-Production / Dev Environment Leak', 
+      badge: 'Dev / Staging', 
+      className: 'bg-red-100 text-red-800 dark:bg-red-950/80 dark:text-red-300 border-red-300 dark:border-red-800', 
+      isRisk: true 
+    };
+  }
+  if (h.includes('admin') || h.includes('portal') || h.includes('dashboard') || h.includes('internal') || h.includes('corp') || h.includes('sso') || h.includes('auth')) {
+    return { 
+      label: 'Management / Corporate SSO Portal', 
+      badge: 'Admin / SSO', 
+      className: 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border-amber-300 dark:border-amber-800', 
+      isRisk: true 
+    };
+  }
+  if (h.includes('mail') || h.includes('smtp') || h.includes('webmail') || h.includes('exchange') || h.includes('outlook')) {
+    return { 
+      label: 'Messaging / Mail Exchanger', 
+      badge: 'Mail Exchanger', 
+      className: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800', 
+      isRisk: false 
+    };
+  }
+  if (h.includes('cdn') || h.includes('static') || h.includes('assets') || h.includes('media') || h.includes('img')) {
+    return { 
+      label: 'Content Delivery / Static Asset', 
+      badge: 'CDN / Static', 
+      className: 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700', 
+      isRisk: false 
+    };
+  }
+  if (c.includes('s3') || c.includes('blob') || c.includes('cloudfront') || c.includes('azure') || c.includes('aws') || c.includes('fastly')) {
+    return { 
+      label: 'Cloud Hosted SaaS / Object Storage', 
+      badge: 'Cloud Storage', 
+      className: 'bg-sky-100 text-sky-800 dark:bg-sky-950/80 dark:text-sky-300 border-sky-300 dark:border-sky-800', 
+      isRisk: false 
+    };
+  }
+  return { 
+    label: 'Standard Web Application Endpoint', 
+    badge: 'Web App', 
+    className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800', 
+    isRisk: false 
+  };
 }
 
 export const DigitalFootprintTab: React.FC<DigitalFootprintTabProps> = ({ scan }) => {
@@ -14,6 +88,7 @@ export const DigitalFootprintTab: React.FC<DigitalFootprintTabProps> = ({ scan }
   const [dnsSearch, setDnsSearch] = useState<string>('');
   const [subdomainSearch, setSubdomainSearch] = useState<string>('');
   const [activeSection, setActiveSection] = useState<'subdomains' | 'dns' | 'certs' | 'whois'>('subdomains');
+  const [copiedHost, setCopiedHost] = useState<string | null>(null);
 
   // Filter DNS
   const filteredDns = scan.dns.records.filter((rec) => {
@@ -34,6 +109,36 @@ export const DigitalFootprintTab: React.FC<DigitalFootprintTabProps> = ({ scan }
     (s.ip && s.ip.toLowerCase().includes(subdomainSearch.toLowerCase())) ||
     (s.cname && s.cname.toLowerCase().includes(subdomainSearch.toLowerCase()))
   );
+
+  const exportSubdomainsCsv = () => {
+    const headers = ['Subdomain', 'Status', 'Resolved IP', 'CNAME Pointer', 'Inferred Service', 'Risk Classification', 'Risk Note'];
+    const rows = scan.subdomains.map(s => {
+      const cat = inferSubdomainCategory(s.subdomain, s.cname);
+      return [
+        `"${s.subdomain}"`,
+        `"${s.status}"`,
+        `"${s.ip || ''}"`,
+        `"${s.cname || ''}"`,
+        `"${cat.label}"`,
+        `"${cat.badge}"`,
+        `"${(s.riskNote || '').replace(/"/g, '""')}"`
+      ].join(',');
+    });
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Subdomain_Asset_Inventory_${scan.domain.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const copyHostname = (hostname: string) => {
+    navigator.clipboard.writeText(hostname);
+    setCopiedHost(hostname);
+    setTimeout(() => setCopiedHost(null), 2000);
+  };
 
   return (
     <div className="space-y-6">
@@ -101,15 +206,26 @@ export const DigitalFootprintTab: React.FC<DigitalFootprintTabProps> = ({ scan }
               </p>
             </div>
 
-            <div className="relative w-full sm:w-64">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
-              <input
-                type="text"
-                value={subdomainSearch}
-                onChange={(e) => setSubdomainSearch(e.target.value)}
-                placeholder="Search subdomains, IPs, CNAMEs..."
-                className="w-full pl-9 pr-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
-              />
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                onClick={exportSubdomainsCsv}
+                className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold border border-slate-200 dark:border-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+                title="Export asset inventory to CSV"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export CSV ({scan.subdomains.length})</span>
+              </button>
+
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
+                <input
+                  type="text"
+                  value={subdomainSearch}
+                  onChange={(e) => setSubdomainSearch(e.target.value)}
+                  placeholder="Search subdomains, IPs, CNAMEs..."
+                  className="w-full pl-9 pr-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:bg-white dark:focus:bg-slate-950 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
+                />
+              </div>
             </div>
           </div>
 
@@ -118,6 +234,7 @@ export const DigitalFootprintTab: React.FC<DigitalFootprintTabProps> = ({ scan }
               <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 uppercase font-semibold tracking-wider border-b border-slate-200 dark:border-slate-800">
                 <tr>
                   <th className="py-3 px-4">Subdomain Hostname</th>
+                  <th className="py-3 px-4">Inferred Service Role</th>
                   <th className="py-3 px-4">Resolution Status</th>
                   <th className="py-3 px-4">Resolved IP</th>
                   <th className="py-3 px-4">CNAME Pointer</th>
@@ -127,69 +244,90 @@ export const DigitalFootprintTab: React.FC<DigitalFootprintTabProps> = ({ scan }
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono">
                 {filteredSubdomains.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-8 text-center text-slate-500">
+                    <td colSpan={6} className="py-8 text-center text-slate-500">
                       No subdomains matching filter criteria.
                     </td>
                   </tr>
                 ) : (
-                  filteredSubdomains.map((sub, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3 px-4 text-slate-900 dark:text-slate-100 font-semibold flex items-center gap-2">
-                        <span className="text-blue-600 dark:text-blue-400 truncate max-w-xs">{sub.subdomain}</span>
-                        {sub.isWildcard && (
-                          <span className="px-1.5 py-0.2 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-[10px] border border-amber-200 dark:border-amber-800 font-sans font-medium">
-                            Wildcard
+                  filteredSubdomains.map((sub, idx) => {
+                    const cat = inferSubdomainCategory(sub.subdomain, sub.cname);
+                    return (
+                      <tr key={idx} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3 px-4 text-slate-900 dark:text-slate-100 font-semibold">
+                          <div className="flex items-center gap-2">
+                            <span className="text-blue-600 dark:text-blue-400 truncate max-w-xs">{sub.subdomain}</span>
+                            <button
+                              onClick={() => copyHostname(sub.subdomain)}
+                              className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                              title="Copy subdomain"
+                            >
+                              {copiedHost === sub.subdomain ? (
+                                <Check className="w-3 h-3 text-emerald-500" />
+                              ) : (
+                                <Copy className="w-3 h-3" />
+                              )}
+                            </button>
+                            {sub.isWildcard && (
+                              <span className="px-1.5 py-0.2 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-[10px] border border-amber-200 dark:border-amber-800 font-sans font-medium">
+                                Wildcard
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-sans font-semibold border ${cat.className} inline-flex items-center gap-1`}>
+                            {cat.badge}
                           </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        {sub.status === 'active' ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-medium inline-flex items-center gap-1 font-sans">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Active Host
-                          </span>
-                        ) : sub.status === 'suspicious_cname' ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800 font-semibold inline-flex items-center gap-1 font-sans animate-pulse">
-                            <AlertTriangle className="w-3 h-3 text-red-600 dark:text-red-400" /> Dangling Takeover Risk
-                          </span>
-                        ) : sub.status === 'unresolved' ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-medium font-sans">
-                            CNAME Only
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-medium font-sans">
-                            CT Discovered
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-slate-700 dark:text-slate-300">
-                        {sub.ip ? (
-                          <span className="bg-slate-100 dark:bg-slate-950 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200">
-                            {sub.ip}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-slate-400 truncate max-w-xs">
-                        {sub.cname ? (
-                          <span className="text-amber-700 dark:text-amber-300 font-mono text-[11px]">
-                            {sub.cname}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">—</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        {sub.riskNote ? (
-                          <span className={`text-[11px] font-sans ${sub.status === 'suspicious_cname' ? 'text-red-700 dark:text-red-400 font-semibold' : 'text-slate-600 dark:text-slate-400'}`}>
-                            {sub.riskNote}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400 font-sans">Standard zone resolution</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                        <td className="py-3 px-4">
+                          {sub.status === 'active' ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-medium inline-flex items-center gap-1 font-sans">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Active Host
+                            </span>
+                          ) : sub.status === 'suspicious_cname' ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800 font-semibold inline-flex items-center gap-1 font-sans animate-pulse">
+                              <AlertTriangle className="w-3 h-3 text-red-600 dark:text-red-400" /> Dangling Takeover Risk
+                            </span>
+                          ) : sub.status === 'unresolved' ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 font-medium font-sans">
+                              CNAME Only
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-medium font-sans">
+                              CT Discovered
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-slate-700 dark:text-slate-300">
+                          {sub.ip ? (
+                            <span className="bg-slate-100 dark:bg-slate-950 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200">
+                              {sub.ip}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-slate-400 truncate max-w-xs">
+                          {sub.cname ? (
+                            <span className="text-amber-700 dark:text-amber-300 font-mono text-[11px]">
+                              {sub.cname}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
+                          {sub.riskNote ? (
+                            <span className={`text-[11px] font-sans ${sub.status === 'suspicious_cname' ? 'text-red-700 dark:text-red-400 font-semibold' : 'text-slate-600 dark:text-slate-400'}`}>
+                              {sub.riskNote}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 font-sans">Standard zone resolution</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
